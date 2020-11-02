@@ -179,6 +179,7 @@ g  + geom_line(aes(group = Group.1), alpha = 0.3, size = 1) +
   labs(title="Promedio espectral por sensor, Octubre SMAP Sulfuro", y="Frecuencia", x="Número Sensor AA-XXXX", colour = "DMI") + theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle=90, hjust=1, vjust = 1, size=5)) + scale_color_gradient(low = "blue", high = "lightblue")
 
 ```
+
 Se observa sólo 1 sensor con valores fijos. Para hacer aún más grafico e interactivo, se utiliza
 libreria plotly para rehacer el gráfico y visualizar los datos.
 
@@ -207,9 +208,11 @@ dim(REPORT)[1]
 # Porcentaje de disponibilidad actual
 paste(sprintf("%.1f", (1 - dim(REPORT)[1]/1200)*100), "%")
 # Generar reporte csv
-readr::write_excel_csv2(REPORT, file = "Reporte.csv" )
+readr::write_excel_csv(REPORT, file = "Reporte.csv" )
 ```
-[REPORTE DISPONIBLE AQUI](https://www.google.com)
+[REPORTE DISPONIBLE AQUI](https://github.com/LeerySpice/SMAP_oxido/blob/main/Reporte.csv)
+
+
 
 
 ```{r R966, include=FALSE, echo=TRUE}

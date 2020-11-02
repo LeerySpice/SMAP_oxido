@@ -213,8 +213,6 @@ readr::write_excel_csv(REPORT, file = "Reporte.csv" )
 [REPORTE DISPONIBLE AQUI](https://github.com/LeerySpice/SMAP_oxido/blob/main/Reporte.csv)
 
 
-
-
 ```{r R966, include=FALSE, echo=TRUE}
 means <- colMeans(df2[-1], na.rm = TRUE)
 plot(1:64, means)

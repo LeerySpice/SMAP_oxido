@@ -1,0 +1,227 @@
+---
+title: "Reporte SMAP SULFURO"
+author: "Eduardo Jara Alfaro"
+date: "02-11-2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(factoextra)
+library(NbClust)
+library(reshape2)
+library(plotly)
+library(stringr)
+library(dplyr)
+
+# rm(list = ls())
+```
+
+## Criterios
+
+Definición de criterios de mantenimiento:
+
+1. Que no exista data al menos de 1 mes del sensor en la base de datos o el SI.
+2. Que la batería se encuentre bajo el 10%
+3. Que exista muy baja conectividad o tasa de transmisión
+4. Que el sensor, es su espectro, muestre un comportamiento defectuoso
+
+```{r mant, echo=TRUE}
+mantenimiento <- factor(c("sin datos 1 mes", "baja conectividad", 
+                          "bateria < 10%", "sensor defectuoso"))
+```
+
+
+## Load data
+
+Cargar la data importada via mongodb del mes completo de Octubre. Se carga lista de direcciones MAC
+asociadas a los sensores en csv
+
+```{r load, echo=TRUE}
+load("Data/dataOctubre.Rda")
+
+# Read key, measurements, date and idler 
+df <- data.frame(key = substr(data[,2],7,27) , NUM = 0, data[,3][,-1], 
+                 date  = data[,4], idler = data[,5])
+
+MAC <- read.csv("Data/dmiMAC2020.csv")[1:1200,c(1,2)]
+
+```
+
+## Preprocessing data
+
+Preparación de la data:
+
+```{r Nas, echo=TRUE}
+
+# Asignar valor etiqueta por key
+for (i in 1:length(MAC$key)) {
+  index <- which(as.character(df$key)==as.character(MAC$key[i]))
+  df[index,"NUM"] <- as.numeric(substr(MAC$numDMI[i],3,6))
+} 
+
+# Casos con al menos un NA como variable y su promedio 
+(sum(!complete.cases(df[4:67]))*100)/dim(df[4:67])[1]
+
+# Dataframe de datos completos
+complete <- data.frame(NUM = as.numeric(substr(MAC$numDMI,3,6)), 
+                       NAS = 0, DAT = 0)
+
+#Casos con NAs
+TNas <- table(df[!complete.cases(df[4:67]),2])
+for (j in 1:length(TNas)) {
+  dmi <- as.numeric(names(TNas[j]))
+  complete$NAS[dmi] <- TNas[[j]]
+} 
+
+#Casos completos
+CNas <- table(df[complete.cases(df[4:67]),2])
+for (j in 1:length(CNas)) {
+  dmi <- as.numeric(names(CNas[j]))
+  complete$DAT[dmi] <- CNas[[j]]
+} 
+
+
+```
+
+## Criterio 1: Sin datos
+
+Se regenera dataframe con primer criterio, obteniendo los sensores que en 1 mes completo
+no se ha ningún dato
+
+```{r crit1, echo=TRUE}
+
+# Cantidad de Sensores con al menos 1 dato (completo o incompleto) en Octubre
+length(CNas)
+
+# Reporte por criterio 1: sin datos en 1 mes
+setdiff(substr(MAC$numDMI,3,6), str_pad(names(CNas), 4, pad = "0"))
+REPORTE <- MAC[-as.numeric(names(CNas)),]
+REPORTE$Criterio <- mantenimiento[1]
+
+```
+
+
+
+## Criterio 2: Baja transmisión
+
+A partir del criterio dos se busca obtener datos con muy baja transmisión en un mes. Se obtiene
+grafico en ggplot para ver la transmisibilidad general de los sensores
+```{r transmision, echo=TRUE}
+
+# Casos totales 
+complete$TOTAL <- complete$NAS + complete$DAT
+# Filtrar casos con mediciones
+complete <- filter(complete, TOTAL > 0)
+
+complete.long <- melt(complete, id = "NUM", measure = c("NAS", "TOTAL"))
+g <- ggplot(complete.long, aes(NUM, value, colour = variable)) 
+g + geom_point(pch = 16, size = 1.5, alpha=0.4)  + geom_line() +
+  labs(title="Octubre SMAP Sulfuro", y="Frecuencia", x="Número Sensor AA-") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(0,1200)) + geom_smooth(method = "lm", se = FALSE)
+
+
+```
+
+Se obtiene un valor promerio de aprox 250 mediciones/mes. Lo cual equivale a 
+
+$250 \frac{mediciones}{mes} = 8.33\frac{mediciones}{día} =  2.88\frac{horas}{medicion}$
+
+Se considerará para mantenimiento que **la tasa de transmisión sea menor a 10 transmisiones/mes**
+
+Se obtiene que la menor tasa de transmisiones la obtienen los siguientes sensores
+
+```{r cri2, echo=TRUE}
+complete[complete$TOTAL<10,]
+REPORTE2 <- MAC[complete[complete$TOTAL<10,1],]
+REPORTE2$Criterio <- mantenimiento[2]
+```
+
+
+
+## Criterio 3: Baja batería
+
+Se agrupan los sensores por su numero y se obtiene el promedio de las bateria. Se considerará
+para mantenimiento los sensores con batería menor al 10% y valores NA
+
+
+```{r cri3, echo=TRUE, warning=FALSE}
+
+df %>% group_by(NUM) %>% 
+  summarise(avg = mean(batt_percentage, na.rm = TRUE)) %>% {. ->> b }
+
+ggplot(b, aes(NUM, avg)) + geom_point(alpha = 0.6, col = ifelse(b$avg < 10,'red','green')) + 
+  geom_smooth(method = "lm") + theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title="Batería Octubre SMAP Sulfuro", y="Bateria %", x="Número Sensor AA-") 
+
+
+b[b$avg<10 | is.na(b$avg),]
+REPORTE3 <- MAC[as.matrix(b[b$avg<10 | is.na(b$avg),1]),]
+REPORTE3$Criterio <- mantenimiento[3]
+
+
+```
+
+
+## Criterio 4: Sensor defectuoso
+
+```{r cri4,echo=TRUE}
+
+df2 <- aggregate(df[, 4:67], list(df$NUM), mean, na.rm = T)
+df2 <- df2[complete.cases(df2),]
+
+long <- melt(df2, id = "Group.1", measure = c(2:65))
+g <- ggplot(long, aes(variable, value, colour = Group.1)) 
+g  + geom_line(aes(group = Group.1), alpha = 0.3, size = 1) +
+  labs(title="Promedio espectral por sensor, Octubre SMAP Sulfuro", y="Frecuencia", x="Número Sensor AA-XXXX", colour = "DMI") + theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle=90, hjust=1, vjust = 1, size=5)) + scale_color_gradient(low = "blue", high = "lightblue")
+
+```
+Se observa sólo 1 sensor con valores fijos. Para hacer aún más grafico e interactivo, se utiliza
+libreria plotly para rehacer el gráfico y visualizar los datos.
+
+```{r plotly, echo=TRUE, warning=FALSE}
+fig <- plot_ly(x=long$variable, y=long$value, 
+               name = long$Group.1, type = 'scatter', mode = 'lines', line = list(width = 1))
+fig
+```
+Como se observa en la figura, es el sensor 966 que se encuentra fijo en un valor alto, por lo cual
+se deduce que se encuentra malo.
+
+```{r crit4, echo=TRUE}
+REPORTE4 <- MAC[966,]
+REPORTE4$Criterio <- mantenimiento[4]
+```
+
+## Resumen
+
+Luego, el total de sensores para realizar mantenimiento está dado por estas cuatro condiciones. 
+Se genera reporte en xlsx
+
+```{r reporte, echo=TRUE}
+REPORT <- bind_rows(REPORTE, REPORTE2, REPORTE3, REPORTE4)
+# Total sensores mantenimiento
+dim(REPORT)[1]
+# Porcentaje de disponibilidad actual
+paste(sprintf("%.1f", (1 - dim(REPORT)[1]/1200)*100), "%")
+# Generar reporte csv
+readr::write_excel_csv2(REPORT, file = "Reporte.csv" )
+```
+[REPORTE DISPONIBLE AQUI](https://www.google.com)
+
+
+```{r R966, include=FALSE, echo=TRUE}
+means <- colMeans(df2[-1], na.rm = TRUE)
+plot(1:64, means)
+
+df2[df2[,1]==966,-1]
+
+fig2 <- plot_ly(x=1:64, y=means, name = "means", type = 'scatter', mode = 'lines', line = list(width = 1))
+fig2 <- fig2 %>% add_lines(x=1:64, y=as.matrix(df2[df2[,1]==966,-1]), name = "966",type = 'scatter', mode = 'lines', line = list(width = 1))
+fig2 <- fig2 %>% add_lines(x=1:64, y=as.matrix(df2[df2[,1]==484,-1]), name = "484",type = 'scatter', mode = 'lines', line = list(width = 1))
+fig2
+
+```
+
